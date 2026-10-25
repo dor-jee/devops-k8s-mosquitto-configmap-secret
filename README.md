@@ -1,93 +1,321 @@
 # k8s-mosquitto-configmap-secrets
 
+Eclipse Mosquitto MQTT broker on Kubernetes, with its configuration and credentials supplied through **ConfigMap** and **Secret** volumes.
 
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![Mosquitto](https://img.shields.io/badge/Eclipse%20Mosquitto-2.0-3C5280?logo=eclipsemosquitto&logoColor=white)
+![Status](https://img.shields.io/badge/type-demo%20%2F%20learning-blue)
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Table of Contents
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Concepts](#concepts)
+4. [Prerequisites](#prerequisites)
+5. [Repository Structure](#repository-structure)
+6. [Step 1: Deploy Mosquitto Without Volumes](#step-1-deploy-mosquitto-without-volumes)
+7. [Step 2: Create the ConfigMap and Secret](#step-2-create-the-configmap-and-secret)
+8. [Step 3: Mount ConfigMap and Secret as Volumes](#step-3-mount-configmap-and-secret-as-volumes)
+9. [Step 4: Verify the Mounts](#step-4-verify-the-mounts)
+10. [Cleanup](#cleanup)
+11. [Key Takeaways](#key-takeaways)
+12. [Related Projects](#related-projects)
+13. [Author](#author)
 
-## Add your files
+---
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Overview
+
+Many services need **configuration files**, not just environment variables. In Kubernetes, ConfigMaps and Secrets can hold individual key-value pairs, but they can also hold **whole files** that are mounted into a Pod as volumes.
+
+This project demonstrates the file-based approach using Mosquitto:
+
+- Deploy Mosquitto with its default configuration and inspect it.
+- Create a ConfigMap (`mosquitto.conf`) and a Secret (credentials file).
+- Mount both into the container and confirm the default config is overridden.
+
+> The key-value approach (ConfigMap/Secret values consumed as environment variables) is covered in
+> [k8s-mongodb-mongoexpress](https://gitlab.com/cloudbuildops/k8s-mongodb-mongoexpress).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    CM["ConfigMap<br/>mosquitto-config-file"]
+    SC["Secret<br/>mosquitto-secret-file"]
+
+    subgraph POD["Pod: mosquitto (eclipse-mosquitto:2.0)"]
+        V1["Volume<br/>mosquitto-config"]
+        V2["Volume<br/>mosquitto-secret"]
+        M1["/mosquitto/config<br/>mosquitto.conf"]
+        M2["/mosquitto/secret<br/>read-only"]
+    end
+
+    CM --> V1 --> M1
+    SC --> V2 --> M2
+```
+
+## Concepts
+
+| Resource | Purpose | Mounted at (this project) |
+|----------|---------|---------------------------|
+| **ConfigMap** `mosquitto-config-file` | Non-sensitive configuration (`mosquitto.conf`) | `/mosquitto/config` |
+| **Secret** `mosquitto-secret-file` | Sensitive data (e.g. password file) | `/mosquitto/secret` (read-only) |
+
+Each key in a ConfigMap or Secret becomes a **file** inside the mount directory, named after the key.
+
+> **Note:** The mount paths depend on the application. Mosquitto expects its config under `/mosquitto/config`; other apps will use different paths.
+
+## Prerequisites
+
+- A running Kubernetes cluster (Minikube, kind, or a managed cluster)
+- `kubectl` configured to talk to that cluster
+- Basic knowledge of Pods, Deployments and volumes
+
+## Repository Structure
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/cloudbuildops/k8s-mosquitto-configmap-secrets.git
-git branch -M main
-git push -uf origin main
+.
+├── mosquitto-without-volumes.yaml   # Deployment with default config (no volumes)
+├── config-file.yaml                 # ConfigMap holding mosquitto.conf
+├── secret-file.yaml                 # Secret holding credentials file
+├── mosquitto.yaml                   # Deployment with ConfigMap + Secret volumes
+├── screenshots/                     # Verification screenshots
+└── README.md
 ```
 
-## Integrate with your tools
+> Adjust file names above if they differ in your checkout.
 
-* [Set up project integrations](https://gitlab.com/cloudbuildops/k8s-mosquitto-configmap-secrets/-/settings/integrations)
+---
 
-## Collaborate with your team
+## Step 1: Deploy Mosquitto Without Volumes
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+First, deploy Mosquitto with no custom configuration to see the container defaults.
 
-## Test and Deploy
+**`mosquitto-without-volumes.yaml`**
 
-Use the built-in continuous integration in GitLab.
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2.0
+          ports:
+            - containerPort: 1883
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+Apply it and find the Pod:
 
-***
+```bash
+kubectl apply -f mosquitto-without-volumes.yaml
+kubectl get pod
+```
 
-# Editing this README
+Open a shell in the Pod (use your own Pod name from the previous command):
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```bash
+kubectl exec -it <mosquitto-pod-name> -- /bin/sh
+```
 
-## Suggestions for a good README
+Inspect the default configuration:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+ls
+cd mosquitto
+ls
+cd config
+ls
+cat mosquitto.conf
+```
 
-## Name
-Choose a self-explaining name for your project.
+<img src="screenshots/mosquitto-conf-file.png" alt="Default mosquitto.conf inside the container" width="600">
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Now remove the deployment. Next we override this file with a ConfigMap.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```bash
+kubectl delete -f mosquitto-without-volumes.yaml
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+---
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## Step 2: Create the ConfigMap and Secret
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+> **Important:** The ConfigMap and Secret must exist **before** the Pod starts, otherwise the Pod will not be able to mount them.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```bash
+# Create and verify the ConfigMap
+kubectl apply -f config-file.yaml
+kubectl get configmap
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+# Create and verify the Secret
+kubectl apply -f secret-file.yaml
+kubectl get secret
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+<img src="screenshots/create-secret-configmap.png" alt="ConfigMap and Secret created" width="600">
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+Both resources are now ready to be consumed by the Deployment.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+---
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## Step 3: Mount ConfigMap and Secret as Volumes
 
-## License
-For open source projects, say how it is licensed.
+Update the Deployment in two parts.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+### 3.1 Define the volumes (Pod level)
+
+```yaml
+      volumes:
+        - name: mosquitto-config
+          configMap:
+            name: mosquitto-config-file
+        - name: mosquitto-secret
+          secret:
+            secretName: mosquitto-secret-file
+```
+
+### 3.2 Mount the volumes (container level)
+
+```yaml
+          volumeMounts:
+            - name: mosquitto-config
+              mountPath: /mosquitto/config
+            - name: mosquitto-secret
+              mountPath: /mosquitto/secret   # path depends on the application
+              readOnly: true
+```
+
+### 3.3 Full Deployment
+
+**`mosquitto.yaml`**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2.0
+          ports:
+            - containerPort: 1883
+          volumeMounts:
+            - name: mosquitto-config
+              mountPath: /mosquitto/config
+            - name: mosquitto-secret
+              mountPath: /mosquitto/secret
+              readOnly: true
+      volumes:
+        - name: mosquitto-config
+          configMap:
+            name: mosquitto-config-file
+        - name: mosquitto-secret
+          secret:
+            secretName: mosquitto-secret-file
+```
+
+Deploy it:
+
+```bash
+kubectl apply -f mosquitto.yaml
+kubectl get pod
+```
+
+---
+
+## Step 4: Verify the Mounts
+
+Open a shell in the new Pod:
+
+```bash
+kubectl exec -it <mosquitto-pod-name> -- /bin/sh
+```
+
+### Secret mounted
+
+```bash
+cd mosquitto
+ls
+cd secret
+ls
+```
+
+The `secret` directory and its file(s) now exist.
+
+<img src="screenshots/secret-dir-created.png" alt="Secret directory created in the container" width="600">
+
+### ConfigMap mounted
+
+```bash
+cd /mosquitto/config
+ls
+cat mosquitto.conf
+```
+
+`mosquitto.conf` now contains the contents defined in the ConfigMap, replacing the container default.
+
+<img src="screenshots/mosquitto-conf-overwritten.png" alt="mosquitto.conf overwritten by the ConfigMap" width="600">
+
+---
+
+## Cleanup
+
+```bash
+kubectl delete -f mosquitto.yaml
+kubectl delete -f config-file.yaml
+kubectl delete -f secret-file.yaml
+```
+
+## Key Takeaways
+
+- ConfigMaps and Secrets can be mounted as **files**, not only used as key-value pairs.
+- Each key becomes a file in the mount directory.
+- Mounting a volume at a directory (e.g. `/mosquitto/config`) **replaces that directory's original contents**.
+- Create the ConfigMap and Secret **before** the Deployment.
+- Mount Secrets with `readOnly: true`.
+- Kubernetes Secrets are only base64-encoded by default. For production, enable encryption at rest and/or use an external secrets manager, and do not commit real credentials to Git.
+
+## Related Projects
+
+- [k8s-mongodb-mongoexpress](https://gitlab.com/cloudbuildops/k8s-mongodb-mongoexpress): ConfigMap and Secret as key-value pairs
+
+## Source
+
+<https://gitlab.com/cloudbuildops/k8s-mosquitto-configmap-secrets>
+
+## Author
+
+**N.Dorjee**
+*CloudBuildOps — DevOps portfolio project*
+
+[![GitHub](https://img.shields.io/badge/GitHub-dor--jee-181717?logo=github&logoColor=white)](https://github.com/dor-jee)
+[![GitLab](https://img.shields.io/badge/GitLab-CloudBuildOps-FC6D26?logo=gitlab&logoColor=white)](https://gitlab.com/cloudbuildops/)
+[![Website](https://img.shields.io/badge/Website-dorjee.dev-0A66C2?logo=googlechrome&logoColor=white)](https://dorjee.dev)
